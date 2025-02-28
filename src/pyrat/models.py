@@ -83,9 +83,9 @@ class Model:
 
         for epoch in range(epochs):
             if shuffle:
-                indices = np.random.permutation(num_samples)
-                X = X[indices]
-                y = y[indices]
+                perm = np.random.permutation(num_samples)
+                X = X[perm]
+                y = y[perm]
 
             epoch_loss_sum = 0.0
             total = 0
