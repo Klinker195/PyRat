@@ -123,3 +123,101 @@ def grid_search_cv(model_class, param_grid, X, y, cv=3, shuffle=True, random_sta
         "best_loss_history": best_loss_history,
         "results": results
     }
+
+
+def random_search_cv(model_class, param_grid, X, y, n_iter, cv=3, shuffle=True, random_state=None, scoring=None, verbose=1):
+    if random_state is not None:
+        np.random.seed(random_state)
+        random.seed(random_state)
+    
+    n_samples = X.shape[0]
+    if shuffle:
+        perm = np.random.permutation(n_samples)
+        X = X[perm]
+        y = y[perm]
+    
+    fold_size = math.ceil(n_samples / cv)
+    folds = []
+    start = 0
+    for _ in range(cv):
+        end = min(start + fold_size, n_samples)
+        folds.append((start, end))
+        start = end
+
+    def default_scoring(model, X_val, y_val):
+        y_pred = model.predict(X_val)
+        pred_classes = np.argmax(y_pred, axis=1)
+        true_classes = np.argmax(y_val, axis=1)
+        return np.mean(pred_classes == true_classes)
+    
+    if scoring is None:
+        scoring = default_scoring
+
+    best_score = -float("inf")
+    best_params = None
+    best_model = None
+    best_loss_history = None
+    results = []
+
+    param_keys = list(param_grid.keys())
+    
+    for i in range(n_iter):
+        combo_dict = {k: random.choice(param_grid[k]) for k in param_keys}
+        if verbose:
+            print(f"\nIteration {i+1}/{n_iter}")
+            print("Testing configuration:")
+            print(combo_dict)
+
+        fold_scores = []
+        for fold_i, (start_idx, end_idx) in enumerate(folds):
+            if verbose:
+                print(f"\n  Fold {fold_i+1}/{len(folds)}")
+            X_val_fold = X[start_idx:end_idx]
+            y_val_fold = y[start_idx:end_idx]
+            X_train_fold = np.concatenate((X[:start_idx], X[end_idx:]), axis=0)
+            y_train_fold = np.concatenate((y[:start_idx], y[end_idx:]), axis=0)
+
+            model_init_params = {
+                "loss_fn": combo_dict["loss_fn"],
+                "optimizer": combo_dict["optimizer"],
+                "opt_params": combo_dict["opt_params"]
+            }
+            model = model_class(**model_init_params)
+            for layer in combo_dict["layers_config"]:
+                model.add(layer)
+
+            epochs = combo_dict.get("epochs", 25)
+            batch_size = combo_dict.get("batch_size", 32)
+            patience = combo_dict.get("patience", epochs)
+            shuffle_local = combo_dict.get("shuffle", True)
+
+            model.fit(X_train_fold, y_train_fold, epochs=epochs, batch_size=batch_size,
+                      validation_data=None, shuffle=shuffle_local, patience=patience, verbose=0)
+            score = scoring(model, X_val_fold, y_val_fold)
+            fold_scores.append(score)
+        
+        mean_score = np.mean(fold_scores)
+        std_score = np.std(fold_scores)
+        results.append((combo_dict, mean_score, std_score))
+        if verbose:
+            print(f"Iteration {i+1} Score: {mean_score:.3f} ± {std_score:.3f}")
+
+        if mean_score > best_score:
+            best_score = mean_score
+            best_params = combo_dict
+            final_model = model_class(loss_fn=combo_dict["loss_fn"],
+                                      optimizer=combo_dict["optimizer"],
+                                      opt_params=combo_dict["opt_params"])
+            for layer in combo_dict["layers_config"]:
+                final_model.add(layer)
+            best_loss_history = final_model.fit(X, y, epochs=epochs, batch_size=batch_size,
+                                                validation_data=None, shuffle=shuffle_local, patience=patience, verbose=0)
+            best_model = final_model
+
+    return {
+        "best_score": best_score,
+        "best_params": best_params,
+        "best_model": best_model,
+        "best_loss_history": best_loss_history,
+        "results": results
+    }

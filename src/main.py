@@ -6,6 +6,7 @@ import pyrat.datasets as rat_datasets
 from pyrat.models import Model
 from pyrat.layers import DenseLayer
 from pyrat.tuning import grid_search_cv
+from pyrat.tuning import random_search_cv
 
 from sklearn.metrics import confusion_matrix
 
@@ -19,7 +20,6 @@ def model_test(X_train, y_train, X_val, y_val):
     loss_history = model.fit(X_train, y_train, epochs=20, batch_size=32, validation_data=(X_val, y_val), patience=5, shuffle=True)
 
     return model, loss_history
-
 
 def grid_search_test(X_train, y_train):
     param_grid = {
@@ -52,6 +52,32 @@ def grid_search_test(X_train, y_train):
 
     return best_model, best_loss_history
 
+def random_search_test(X_train, y_train, n_iter=4):
+    param_grid = {
+        "loss_fn": ["cross-entropy"],
+        "optimizer": ["adam", "rprop"],
+        "opt_params": [
+            {"eta_plus": 1.2, "eta_minus": 0.5, "delta_min": 1e-6, "delta_max": 50},
+            {"eta_plus": 1.5, "eta_minus": 0.4, "delta_min": 1e-6, "delta_max": 100},
+            {"eta_plus": 1.1, "eta_minus": 0.7, "delta_min": 1e-7, "delta_max": 25},
+            {"eta_plus": 1.3, "eta_minus": 0.3, "delta_min": 1e-6, "delta_max": 75}
+        ],
+        "layers_config": [
+            [DenseLayer(input_size=784, output_size=10, activation_fn='softmax')]
+        ],
+        "epochs": [50],
+        "batch_size": [60000]
+    }
+    
+    results = random_search_cv(model_class=Model, param_grid=param_grid, X=X_train, y=y_train, n_iter=n_iter, cv=3, shuffle=True, random_state=42, verbose=2)
+    
+    print("\nBest Score:", results["best_score"])
+    print("Best Params:", results["best_params"])
+    print("Detailed results:")
+    for combo, mean_score, std_score in results["results"]:
+        print(combo, "->", f"{mean_score:.3f} ± {std_score:.3f}")
+    
+    return results["best_model"], results["best_loss_history"]
 
 if __name__ == "__main__":
     mnist_train_set = rat_datasets.MNIST(train=True)
@@ -69,8 +95,9 @@ if __name__ == "__main__":
     print("Test set shape:", X_val.shape, y_val.shape)
     print()
 
-    model, loss_history = grid_search_test(X_train, y_train)
-    # model, loss_history = model_test(X_train, y_train)
+    # model, loss_history = random_search_test(X_train, y_train)
+    # model, loss_history = grid_search_test(X_train, y_train)
+    model, loss_history = model_test(X_train, y_train)
     
     plt.figure(figsize=(8, 6))
     plt.plot(loss_history['loss'], label='Training Loss')
