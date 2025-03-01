@@ -10,7 +10,6 @@ class Optimizer(ABC):
     def update(self, weights, bias, grad_w, grad_b):
         pass
 
-
 class RPROP(Optimizer):
     def __init__(self, eta_plus=1.2, eta_minus=0.5, delta_min=1e-6, delta_max=50):
         self.eta_plus = eta_plus
@@ -51,7 +50,6 @@ class RPROP(Optimizer):
         self.prev_grad_b = grad_b.copy()
 
         return weights, bias
-
 
 class Adam(Optimizer):
     def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8):

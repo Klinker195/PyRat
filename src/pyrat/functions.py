@@ -1,7 +1,5 @@
 import numpy as np
 
-# TODO: Refactor some functions
-
 def relu(x):
     return np.maximum(0, x)
 
@@ -69,13 +67,20 @@ WEIGHT_INIT_FUNCTIONS = {
     "he_uniform": he_uniform
 }
 
+def mse_loss(y_pred, y_true):
+    return np.mean((y_pred - y_true) ** 2)
+
+def mse_loss_derivative(y_pred, y_true):
+    return 2 * (y_pred - y_true) / y_true.shape[0]
+
+def cross_entropy_loss(y_pred, y_true):
+    epsilon = 1e-9
+    return -np.mean(np.sum(y_true * np.log(y_pred + epsilon), axis=1))
+
+def cross_entropy_loss_derivative(y_pred, y_true):
+    return y_pred - y_true
+
 LOSS_FUNCTIONS = {
-    "mse": [(
-        lambda y_pred, y_true: np.mean((y_pred - y_true) ** 2),
-        lambda y_pred, y_true: 2 * (y_pred - y_true) / y_true.shape[0]
-    ), "MSE"],
-    "cross-entropy": [(
-        lambda y_pred, y_true: -np.mean(np.sum(y_true * np.log(y_pred + 1e-9), axis=1)),
-        lambda y_pred, y_true: y_pred - y_true
-    ), "Cross-Entropy"]
+    "mse": [(mse_loss, mse_loss_derivative), "MSE"],
+    "cross-entropy": [(cross_entropy_loss, cross_entropy_loss_derivative), "Cross-Entropy"]
 }

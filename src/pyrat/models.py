@@ -41,9 +41,7 @@ class Model:
             for k, v in opt_params.items():
                 if k in valid_params:
                     valid_kwargs[k] = v
-                # else:
-                #     raise TypeError(f"Optimizer '{optimizer}' does not accept argument '{k}'.")
-                
+                    
             if 'learning_rate' in valid_params and 'learning_rate' not in valid_kwargs:
                 valid_kwargs['learning_rate'] = default_lr
 
@@ -69,8 +67,9 @@ class Model:
     def compute_loss_derivative(self, y_pred, y_true):
         return self.loss_derivative(y_pred, y_true)
 
-    def fit(self, X, y, epochs=25, batch_size=32, validation_data=None, shuffle=True, verbose=1,
-            patience=None, min_delta=1e-5):
+    # TODO: Add random state parameter. General refactoring.
+
+    def fit(self, X, y, epochs=25, batch_size=32, validation_data=None, shuffle=True, verbose=1, patience=None, min_delta=1e-5):
         num_samples = X.shape[0]
         best_loss = float("inf")
         wait = 0
@@ -134,35 +133,21 @@ class Model:
                 y_val_pred = self.predict(X_val)
                 val_loss = self.compute_loss(y_val_pred, y_val)
                 val_loss_history.append(val_loss)
-                val_accuracy = np.mean(
-                    np.argmax(y_val_pred, axis=1) == np.argmax(y_val, axis=1)
-                )
+                val_accuracy = np.mean(np.argmax(y_val_pred, axis=1) == np.argmax(y_val, axis=1))
             else:
                 val_loss = None
 
             if verbose == 1:
                 sys.stdout.write("\n")
                 if validation_data is not None:
-                    print(
-                        f"Epoch {epoch+1}/{epochs} - {int(elapsed_us)}us "
-                        f"- loss: {avg_loss:.4f} - accuracy: {train_accuracy:.4f} "
-                        f"- val_loss: {val_loss:.4f} - val_acc: {val_accuracy:.4f}"
-                    )
+                    print(f"Epoch {epoch+1}/{epochs} - {int(elapsed_us)}us - loss: {avg_loss:.4f} - accuracy: {train_accuracy:.4f} - val_loss: {val_loss:.4f} - val_acc: {val_accuracy:.4f}")
                 else:
-                    print(
-                        f"Epoch {epoch+1}/{epochs} - {int(elapsed_us)}us "
-                        f"- loss: {avg_loss:.4f} - accuracy: {train_accuracy:.4f}"
-                    )
+                    print(f"Epoch {epoch+1}/{epochs} - {int(elapsed_us)}us - loss: {avg_loss:.4f} - accuracy: {train_accuracy:.4f}")
             elif verbose == 2:
                 if validation_data is not None:
-                    print(
-                        f"{int(elapsed_us)}us - loss: {avg_loss:.4f} - accuracy: {train_accuracy:.4f} "
-                        f"- val_loss: {val_loss:.4f} - val_acc: {val_accuracy:.4f}"
-                    )
+                    print(f"{int(elapsed_us)}us - loss: {avg_loss:.4f} - accuracy: {train_accuracy:.4f} - val_loss: {val_loss:.4f} - val_acc: {val_accuracy:.4f}")
                 else:
-                    print(
-                        f"{int(elapsed_us)}us - loss: {avg_loss:.4f} - accuracy: {train_accuracy:.4f}"
-                    )
+                    print(f"{int(elapsed_us)}us - loss: {avg_loss:.4f} - accuracy: {train_accuracy:.4f}")
 
             current_loss = val_loss if val_loss is not None else avg_loss
             if current_loss + min_delta < best_loss:

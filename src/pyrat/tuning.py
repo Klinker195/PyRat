@@ -2,6 +2,7 @@ import inspect
 import numpy as np
 import math
 import random
+import copy
 from itertools import product
 
 from . import optimizers as rat_opt
@@ -25,7 +26,9 @@ def __get_model_init_params(model_class, combo_dict):
             model_init_params[key] = combo_dict[key]
     return model_init_params
 
-def grid_search_cv(model_class, param_grid, X, y, cv=3, shuffle=True, random_state=None, scoring=None, verbose=1):
+# TODO: Add support to other scoring functions. General refactoring.
+
+def grid_search_cv(model_class, param_grid, X, y, validation_data=None, cv=3, shuffle=True, random_state=None, scoring=None, verbose=1):
     if random_state is not None:
         np.random.seed(random_state)
         random.seed(random_state)
@@ -54,23 +57,39 @@ def grid_search_cv(model_class, param_grid, X, y, cv=3, shuffle=True, random_sta
         scoring = default_scoring
 
     param_keys = list(param_grid.keys())
-    combos = list(product(*[param_grid[k] for k in param_keys]))
+    raw_combos = list(product(*[param_grid[k] for k in param_keys]))
+
+    # TODO: If there is a combo for an optimizer with parameters, it overrides the one without parameters.
+
+    filtered_combos = []
+    for combo_tuple in raw_combos:
+        combo_dict = dict(zip(param_keys, combo_tuple))
+        filtered_dict = __filter_opt_params(combo_dict)
+        filtered_combos.append(filtered_dict)
+
+    unique_combos = []
+    for c in filtered_combos:
+        if c not in unique_combos:
+            unique_combos.append(c)
+
+    combos = unique_combos
 
     best_score = -float("inf")
     best_params = None
     best_model = None
-    best_loss_history = None
     results = []
 
-    for combo in combos:
-        combo_dict = dict(zip(param_keys, combo))
-        combo_dict = __filter_opt_params(combo_dict)
-        print(f"\nTraining new configuration:\n{combo_dict}")
+    config_counter = 1
+
+    for combo_dict in combos:
+        if verbose:
+            print(f"\nTraining configuration [{config_counter}/{len(combos)}]:\n{combo_dict}")
 
         fold_scores = []
 
         for fold_i, (start_idx, end_idx) in enumerate(folds):
-            print(f"\nFold {fold_i+1}/{len(folds)}\n")
+            if verbose:
+                print(f"\nFold {fold_i+1}/{len(folds)}")
 
             X_val_fold = X[start_idx:end_idx]
             y_val_fold = y[start_idx:end_idx]
@@ -79,42 +98,55 @@ def grid_search_cv(model_class, param_grid, X, y, cv=3, shuffle=True, random_sta
 
             model_init_params = __get_model_init_params(model_class, combo_dict)
             model = model_class(**model_init_params)
-            for layer in combo_dict.get("layers_config", []):
-                model.add(layer)
+
+            if "layers_config" in combo_dict:
+                for layer in copy.deepcopy(combo_dict["layers_config"]):
+                    model.add(layer)
 
             epochs = combo_dict.get("epochs", 25)
             batch_size = combo_dict.get("batch_size", 32)
             patience = combo_dict.get("patience", epochs)
             shuffle_local = combo_dict.get("shuffle", True)
 
-            model.fit(X_train_fold, y_train_fold, epochs=epochs, batch_size=batch_size,
-                      validation_data=None, shuffle=shuffle_local, patience=patience, verbose=verbose)
+            model.fit(X_train_fold, y_train_fold, epochs=epochs, batch_size=batch_size, validation_data=(X_val_fold, y_val_fold), shuffle=shuffle_local, patience=patience, verbose=verbose)
 
             score = scoring(model, X_val_fold, y_val_fold)
             fold_scores.append(score)
 
         mean_score = np.mean(fold_scores)
         std_score = np.std(fold_scores)
+
         results.append((combo_dict, mean_score, std_score))
+        if verbose:
+            print(f"\nConfiguration: {combo_dict}\nMean score: {mean_score:.4f}, Std: {std_score:.4f}")
 
         if mean_score > best_score:
             best_score = mean_score
             best_params = combo_dict
-
-            final_model_init_params = __get_model_init_params(model_class, best_params)
-            final_model = model_class(**final_model_init_params)
-            for layer in best_params.get("layers_config", []):
-                final_model.add(layer)
-
-            epochs = best_params.get("epochs", 25)
-            batch_size = best_params.get("batch_size", 32)
-            patience = best_params.get("patience", epochs)
-            shuffle_local = best_params.get("shuffle", True)
-
-            final_loss_history = final_model.fit(X, y, epochs=epochs, batch_size=batch_size, validation_data=None, shuffle=shuffle_local, patience=patience, verbose=verbose)
             
-            best_model = final_model
-            best_loss_history = final_loss_history
+        config_counter += 1
+
+    if best_params is None:
+        raise ValueError("No valid combination found (best_params is None).")
+
+    final_model_init_params = __get_model_init_params(model_class, best_params)
+    best_model = model_class(**final_model_init_params)
+
+    if "layers_config" in best_params:
+        for layer in copy.deepcopy(best_params["layers_config"]):
+            best_model.add(layer)
+
+    epochs = best_params.get("epochs", 25)
+    batch_size = best_params.get("batch_size", 32)
+    patience = best_params.get("patience", epochs)
+    shuffle_local = best_params.get("shuffle", True)
+
+    if verbose:
+        print("\nTraining final model on full dataset with best parameters...\n")
+
+    final_loss_history = best_model.fit(X, y, epochs=epochs, batch_size=batch_size, validation_data=validation_data, shuffle=shuffle_local, patience=patience, verbose=verbose)
+
+    best_loss_history = final_loss_history
 
     return {
         "best_score": best_score,
@@ -124,6 +156,7 @@ def grid_search_cv(model_class, param_grid, X, y, cv=3, shuffle=True, random_sta
         "results": results
     }
 
+# TODO: Make adjustments in relation to grid search fixes.
 
 def random_search_cv(model_class, param_grid, X, y, n_iter, cv=3, shuffle=True, random_state=None, scoring=None, verbose=1):
     if random_state is not None:

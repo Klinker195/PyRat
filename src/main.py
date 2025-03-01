@@ -12,16 +12,18 @@ from sklearn.metrics import confusion_matrix
 
 # pyrat - Rapid Artificial Training
 
-def model_test(X_train, y_train, X_val, y_val):
+# TODO: General refactoring of models.py and tuning.py
+
+def model_test(X_train, y_train, validation_data=None):
     model = Model(loss_fn='cross-entropy', optimizer='rprop')
 
     model.add(DenseLayer(input_size=784, output_size=10, activation_fn='softmax'))
 
-    loss_history = model.fit(X_train, y_train, epochs=20, batch_size=32, validation_data=(X_val, y_val), patience=5, shuffle=True)
+    loss_history = model.fit(X_train, y_train, epochs=50, batch_size=60000, validation_data=validation_data, shuffle=True, patience=20)
 
     return model, loss_history
 
-def grid_search_test(X_train, y_train):
+def grid_search_test(X_train, y_train, validation_data=None):
     param_grid = {
         "loss_fn": ["cross-entropy"],
         "optimizer": ["adam", "rprop"],
@@ -29,23 +31,27 @@ def grid_search_test(X_train, y_train):
             {"eta_plus": 1.2, "eta_minus": 0.5, "delta_min": 1e-6, "delta_max": 50},
             {"eta_plus": 1.5, "eta_minus": 0.4, "delta_min": 1e-6, "delta_max": 100},
             {"eta_plus": 1.1, "eta_minus": 0.7, "delta_min": 1e-7, "delta_max": 25},
-            {"eta_plus": 1.3, "eta_minus": 0.3, "delta_min": 1e-6, "delta_max": 75}
+            {"eta_plus": 1.3, "eta_minus": 0.3, "delta_min": 1e-6, "delta_max": 75},
+            {"learning_rate": 0.001},
+            {"learning_rate": 0.01}
         ],
         "layers_config": [
             [DenseLayer(input_size=784, output_size=10, activation_fn='softmax')]
         ],
         "epochs": [50],
-        "batch_size": [60000]
+        "batch_size": [32, 60000]
     }
 
-    results = grid_search_cv(model_class=Model, param_grid=param_grid, X=X_train, y=y_train, cv=3, shuffle=True, random_state=42, verbose=2)
+    results = grid_search_cv(model_class=Model, param_grid=param_grid, X=X_train, y=y_train, validation_data=validation_data, cv=3, shuffle=True, verbose=1)
 
-    print("Best Score:", results["best_score"])
-    print("Best Params:", results["best_params"])
+    print(f"\nBest Score: {results["best_score"]:.4f}\n")
+    print(f"Best Params: {results["best_params"]}\n")
+
+    sorted_results = sorted(results["results"], key=lambda x: x[1], reverse=True)
 
     print("Detailed results:")
-    for combo, mean_score, std_score in results["results"]:
-        print(combo, "->", f"{mean_score:.3f} ± {std_score:.3f}")
+    for combo, mean_score, std_score in sorted_results:
+        print(combo, f"\navg_score: {mean_score:.4f} - std_score: {std_score:.4f}\n")
 
     best_model = results["best_model"]
     best_loss_history = results["best_loss_history"]
@@ -55,7 +61,7 @@ def grid_search_test(X_train, y_train):
 def random_search_test(X_train, y_train, n_iter=4):
     param_grid = {
         "loss_fn": ["cross-entropy"],
-        "optimizer": ["adam", "rprop"],
+        "optimizer": ["rprop"],
         "opt_params": [
             {"eta_plus": 1.2, "eta_minus": 0.5, "delta_min": 1e-6, "delta_max": 50},
             {"eta_plus": 1.5, "eta_minus": 0.4, "delta_min": 1e-6, "delta_max": 100},
@@ -96,8 +102,8 @@ if __name__ == "__main__":
     print()
 
     # model, loss_history = random_search_test(X_train, y_train)
-    # model, loss_history = grid_search_test(X_train, y_train)
-    model, loss_history = model_test(X_train, y_train)
+    model, loss_history = grid_search_test(X_train, y_train, validation_data=(X_val, y_val))
+    # model, loss_history = model_test(X_train, y_train, validation_data=(X_val, y_val))
     
     plt.figure(figsize=(8, 6))
     plt.plot(loss_history['loss'], label='Training Loss')
