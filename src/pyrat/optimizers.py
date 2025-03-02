@@ -91,10 +91,8 @@ class Adam(Optimizer):
         bias -= self.learning_rate * m_b_hat / (np.sqrt(v_b_hat) + self.epsilon)
 
         return weights, bias
-    
-# TODO: Try to remove default value for learning rate using __init__ signature to discriminate optimizer
 
 OPTIMIZERS = {
-    "rprop": (RPROP, None),
-    "adam": (Adam, 0.001)
+    "rprop": RPROP,
+    "adam": Adam
 }

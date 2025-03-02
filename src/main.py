@@ -12,7 +12,7 @@ from sklearn.metrics import confusion_matrix
 
 # pyrat - Rapid Artificial Training
 
-# TODO: General refactoring of models.py and tuning.py
+# TODO: Add comments and docstrings
 
 def model_test(X_train, y_train, validation_data=None):
     model = Model(loss_fn='cross-entropy', optimizer='rprop')
@@ -42,7 +42,7 @@ def grid_search_test(X_train, y_train, validation_data=None):
         "batch_size": [32, 60000]
     }
 
-    results = grid_search_cv(model_class=Model, param_grid=param_grid, X=X_train, y=y_train, validation_data=validation_data, cv=3, shuffle=True, verbose=1)
+    results = grid_search_cv(model_class=Model, param_grid=param_grid, X=X_train, y=y_train, validation_data=validation_data, cv=3, scoring="accuracy", shuffle=True, verbose=1, random_state=42)
 
     print(f"\nBest Score: {results["best_score"]:.4f}\n")
     print(f"Best Params: {results["best_params"]}\n")

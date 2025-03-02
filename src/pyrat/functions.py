@@ -74,8 +74,9 @@ def mse_loss_derivative(y_pred, y_true):
     return 2 * (y_pred - y_true) / y_true.shape[0]
 
 def cross_entropy_loss(y_pred, y_true):
-    epsilon = 1e-9
-    return -np.mean(np.sum(y_true * np.log(y_pred + epsilon), axis=1))
+    eps = 1e-15
+    predictions = np.clip(y_pred, eps, 1 - eps)
+    return -np.mean(np.sum(y_true * np.log(predictions), axis=1))
 
 def cross_entropy_loss_derivative(y_pred, y_true):
     return y_pred - y_true
@@ -83,4 +84,22 @@ def cross_entropy_loss_derivative(y_pred, y_true):
 LOSS_FUNCTIONS = {
     "mse": [(mse_loss, mse_loss_derivative), "MSE"],
     "cross-entropy": [(cross_entropy_loss, cross_entropy_loss_derivative), "Cross-Entropy"]
+}
+
+def accuracy_scoring(model, X_val, y_val):
+    predictions = model.predict(X_val)
+    predicted_classes = np.argmax(predictions, axis=1)
+    true_classes = np.argmax(y_val, axis=1)
+    return np.mean(predicted_classes == true_classes)
+
+def cross_entropy_scoring(model, X_val, y_val):
+    predictions = model.predict(X_val)
+    eps = 1e-15
+    predictions = np.clip(predictions, eps, 1 - eps)
+    loss = -np.mean(np.sum(y_val * np.log(predictions), axis=1))
+    return loss
+
+SCORING_FUNCTIONS = {
+    "accuracy": {"fn": accuracy_scoring, "compare": lambda current, best: current > best, "best_init": -float('inf')},
+    "cross-entropy": {"fn": cross_entropy_scoring, "compare": lambda current, best: current < best, "best_init": float('inf')},
 }
