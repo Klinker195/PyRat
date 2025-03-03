@@ -423,96 +423,272 @@ def grid_search_cv(
         "results": results
     }
 
-# TODO: Make adjustments in relation to grid search fixes.
 
-def random_search_cv(model_class, param_grid, X, y, n_iter, cv=3, shuffle=True, random_state=None, scoring=None, verbose=1):
+
+def random_search_cv(
+    model_class: Type["Model"],
+    param_grid: Dict[str, List[Any]],
+    n_iter: int,
+    X: np.ndarray,
+    y: np.ndarray,
+    validation_data: Optional[Tuple[np.ndarray, np.ndarray]] = None,
+    cv: int = 3,
+    shuffle: bool = True,
+    random_state: Optional[int] = None,
+    scoring: str = "accuracy",
+    verbose: int = 1,
+    n_jobs: int = 1
+) -> Dict[str, Any]:
+    """
+    Perform random search cross-validation to tune hyperparameters and select the best model configuration.
+
+    Parameters
+    ----------
+    model_class : Type[Model]
+        The model class to be trained.
+    param_grid : Dict[str, List[Any]]
+        Dictionary containing hyperparameters to search over. Each key maps to a list of possible values.
+    n_iter : int
+        Number of random configurations to evaluate.
+    X : np.ndarray
+        Feature dataset.
+    y : np.ndarray
+        Target labels.
+    validation_data : Optional[Tuple[np.ndarray, np.ndarray]], optional
+        Tuple (X_val, y_val) for final model validation; by default None.
+    cv : int, optional
+        Number of cross-validation folds; by default 3.
+    shuffle : bool, optional
+        Whether to shuffle the dataset before splitting; by default True.
+    random_state : Optional[int], optional
+        Seed for random number generators; by default None.
+    scoring : str, optional
+        Scoring function name to evaluate model performance; by default "accuracy".
+    verbose : int, optional
+        Verbosity level for printing progress; by default 1.
+    n_jobs : int, optional
+        Number of processes to use for parallelization; by default 1 (no parallelization).
+
+    Returns
+    -------
+    Dict[str, Any]
+        Dictionary containing:
+            - best_score: Best cross-validation score.
+            - best_params: Best hyperparameter configuration.
+            - best_model: Model trained on the full dataset with the best parameters.
+            - best_loss_history: Training loss history for the best model.
+            - results: List of tuples (params, mean_score, std_score) for each configuration.
+    """
+
+    # Check correctness of the cv and n_jobs parameters
+    if cv < 2:
+        raise ValueError("The 'cv' parameter must be at least 2.")
+    if cv > X.shape[0]:
+        raise ValueError("The 'cv' parameter cannot exceed the number of samples.")
+    if n_jobs < 1:
+        raise ValueError("The 'n_jobs' parameter must be >= 1.")
+
+    # Set the seed for random number generators if provided
     if random_state is not None:
         np.random.seed(random_state)
         random.seed(random_state)
-    
+
+    start_time_total = time.time()
     n_samples = X.shape[0]
+
+    # Shuffle the dataset if required
     if shuffle:
         perm = np.random.permutation(n_samples)
         X = X[perm]
         y = y[perm]
-    
-    fold_size = math.ceil(n_samples / cv)
-    folds = []
-    start = 0
-    for _ in range(cv):
-        end = min(start + fold_size, n_samples)
-        folds.append((start, end))
-        start = end
 
-    def default_scoring(model, X_val, y_val):
-        y_pred = model.predict(X_val)
-        pred_classes = np.argmax(y_pred, axis=1)
-        true_classes = np.argmax(y_val, axis=1)
-        return np.mean(pred_classes == true_classes)
-    
-    if scoring is None:
-        scoring = default_scoring
+    # Create cross-validation folds
+    folds = __create_folds(n_samples, cv)
 
-    best_score = -float("inf")
-    best_params = None
-    best_model = None
-    best_loss_history = None
+    # Retrieve the scoring function from the global SCORING_FUNCTIONS
+    scoring_name = scoring
+    if scoring_name not in SCORING_FUNCTIONS:
+        raise ValueError(f"'{scoring_name}' is not a valid scoring function.")
+    scoring_fn = SCORING_FUNCTIONS[scoring_name]["fn"]
+
+    def sample_random_params(param_grid: Dict[str, List[Any]]) -> Dict[str, Any]:
+        """
+        Randomly sample a hyperparameter configuration from param_grid.
+        If 'opt_params' exists and 'optimizer' is set, use inspect to retrieve the 
+        optimizer's required hyperparameter names and then form a randomized dictionary 
+        by selecting a random value for each hyperparameter from the values provided 
+        in param_grid["opt_params"].
+        """
+        params = {}
+        # Sample a random value for each parameter except 'opt_params'
+        for key, values in param_grid.items():
+            if key != "opt_params":
+                params[key] = random.choice(values)
+        
+        # Handle 'opt_params' separately if present
+        if "opt_params" in param_grid:
+            # If 'optimizer' is specified, try to form a randomized dictionary based on its signature.
+            if "optimizer" in params:
+                optimizer_type = params["optimizer"]
+                optimizer_class = OPTIMIZERS.get(optimizer_type, None)
+                if optimizer_class is not None:
+                    # Get the required parameter names from the optimizer's __init__ (excluding 'self')
+                    sig = inspect.signature(optimizer_class.__init__)
+                    required_opt_params = [name for name in sig.parameters if name != 'self']
+                    
+                    randomized_opt_params = {}
+                    # For each required hyperparameter, gather all possible values from opt_params entries.
+                    for opt_name in required_opt_params:
+                        # Collect all values for this hyperparameter from the list of dictionaries.
+                        candidate_values = []
+                        for opt_dict in param_grid["opt_params"]:
+                            if opt_name in opt_dict:
+                                candidate_values.append(opt_dict[opt_name])
+                        if candidate_values:
+                            randomized_opt_params[opt_name] = random.choice(candidate_values)
+                        # Optionally, if candidate_values is empty, one might decide to leave out the parameter,
+                        # use a default from the signature, or raise an error.
+                    params["opt_params"] = randomized_opt_params
+                else:
+                    # Fallback: if the optimizer is not in our mapping, choose a random dictionary.
+                    params["opt_params"] = random.choice(param_grid["opt_params"])
+            else:
+                # If no optimizer is specified, simply choose a random dictionary from opt_params.
+                params["opt_params"] = random.choice(param_grid["opt_params"])
+        return params
+
     results = []
+    best_score = SCORING_FUNCTIONS[scoring_name]["best_init"]
+    best_params = None
 
-    param_keys = list(param_grid.keys())
-    
-    for i in range(n_iter):
-        combo_dict = {k: random.choice(param_grid[k]) for k in param_keys}
-        if verbose:
-            print(f"\nIteration {i+1}/{n_iter}")
-            print("Testing configuration:")
-            print(combo_dict)
+    def _train_and_evaluate(params: Dict[str, Any]) -> Tuple[Dict[str, Any], float, float, float]:
+        """
+        Train a given hyperparameter configuration using cross-validation and return 
+        a tuple (params, mean_score, std_score, config_time).
+        """
+        start_config_time = time.time()
+
+        if n_jobs > 1 and verbose > 0:
+            print(f"Training configuration: {params}")
 
         fold_scores = []
-        for fold_i, (start_idx, end_idx) in enumerate(folds):
-            if verbose:
-                print(f"\n  Fold {fold_i+1}/{len(folds)}")
+        # Set local verbosity for model.fit calls: reduce output in parallel mode.
+        local_fit_verbose = 0 if n_jobs > 1 else verbose
+
+        # Iterate over each cross-validation fold
+        for fold_index, (start_idx, end_idx) in enumerate(folds):
+            if verbose > 0 and n_jobs == 1:
+                print(f"\nFold {fold_index + 1}/{len(folds)}\n")
+
+            # Split the data for the current fold
             X_val_fold = X[start_idx:end_idx]
             y_val_fold = y[start_idx:end_idx]
             X_train_fold = np.concatenate((X[:start_idx], X[end_idx:]), axis=0)
             y_train_fold = np.concatenate((y[:start_idx], y[end_idx:]), axis=0)
 
-            model_init_params = {
-                "loss_fn": combo_dict["loss_fn"],
-                "optimizer": combo_dict["optimizer"],
-                "opt_params": combo_dict["opt_params"]
-            }
+            # Initialize the model with parameters extracted for initialization
+            model_init_params = __extract_model_init_params(model_class, params)
             model = model_class(**model_init_params)
-            for layer in combo_dict["layers_config"]:
-                model.add(layer)
 
-            epochs = combo_dict.get("epochs", 25)
-            batch_size = combo_dict.get("batch_size", 32)
-            patience = combo_dict.get("patience", epochs)
-            shuffle_local = combo_dict.get("shuffle", True)
+            # Add layers if specified in the parameters
+            if "layers_config" in params:
+                for layer in copy.deepcopy(params["layers_config"]):
+                    model.add(layer)
 
-            model.fit(X_train_fold, y_train_fold, epochs=epochs, batch_size=batch_size,
-                      validation_data=None, shuffle=shuffle_local, patience=patience, verbose=0)
-            score = scoring(model, X_val_fold, y_val_fold)
+            # Retrieve training hyperparameters
+            epochs = params.get("epochs", 25)
+            batch_size = params.get("batch_size", 32)
+            patience = params.get("patience", epochs)
+            shuffle_local = params.get("shuffle", True)
+
+            # Train the model on the current fold
+            model.fit(
+                X_train_fold, y_train_fold,
+                epochs=epochs,
+                batch_size=batch_size,
+                validation_data=(X_val_fold, y_val_fold),
+                shuffle=shuffle_local,
+                patience=patience,
+                verbose=local_fit_verbose,
+                random_state=random_state
+            )
+
+            # Evaluate the model on the validation fold
+            score = scoring_fn(model, X_val_fold, y_val_fold)
             fold_scores.append(score)
-        
+
         mean_score = np.mean(fold_scores)
         std_score = np.std(fold_scores)
-        results.append((combo_dict, mean_score, std_score))
-        if verbose:
-            print(f"Iteration {i+1} Score: {mean_score:.3f} ± {std_score:.3f}")
+        config_time = time.time() - start_config_time
+        return params, mean_score, std_score, config_time
 
-        if mean_score > best_score:
-            best_score = mean_score
-            best_params = combo_dict
-            final_model = model_class(loss_fn=combo_dict["loss_fn"],
-                                      optimizer=combo_dict["optimizer"],
-                                      opt_params=combo_dict["opt_params"])
-            for layer in combo_dict["layers_config"]:
-                final_model.add(layer)
-            best_loss_history = final_model.fit(X, y, epochs=epochs, batch_size=batch_size,
-                                                validation_data=None, shuffle=shuffle_local, patience=patience, verbose=0)
-            best_model = final_model
+    # Evaluate configurations either sequentially or in parallel
+    if n_jobs == 1:
+        for config_counter in range(1, n_iter + 1):
+            params = sample_random_params(param_grid)
+            if verbose:
+                print(f"- Training configuration [{config_counter}/{n_iter}]: {params}")
+
+            params, mean_score, std_score, config_time = _train_and_evaluate(params)
+            results.append((params, mean_score, std_score))
+
+            if verbose:
+                print(f"\nConfiguration completed in {config_time:.2f} second(s).")
+                print(f"Mean score ({scoring_name}): {mean_score:.4f}, Std: {std_score:.4f}\n")
+
+            if SCORING_FUNCTIONS[scoring_name]["compare"](mean_score, best_score):
+                best_score = mean_score
+                best_params = params
+    else:
+        # Evaluate configurations in parallel using joblib.Parallel
+        parallel_results = Parallel(n_jobs=n_jobs)(
+            delayed(_train_and_evaluate)(sample_random_params(param_grid)) for _ in range(n_iter)
+        )
+
+        for config_counter, (params, mean_score, std_score, config_time) in enumerate(parallel_results, start=1):
+            results.append((params, mean_score, std_score))
+            if verbose > 0:
+                print(
+                    f"Configuration [{config_counter}/{n_iter}] completed in {config_time:.2f} second(s): "
+                    f"Mean score ({scoring_name}) = {mean_score:.4f}, Std = {std_score:.4f}"
+                )
+            if SCORING_FUNCTIONS[scoring_name]["compare"](mean_score, best_score):
+                best_score = mean_score
+                best_params = params
+
+    if best_params is None:
+        raise ValueError("No valid hyperparameter configuration found.")
+
+    # Train the final model on the full dataset with the best hyperparameters
+    final_model_params = __extract_model_init_params(model_class, best_params)
+    best_model = model_class(**final_model_params)
+
+    if "layers_config" in best_params:
+        for layer in copy.deepcopy(best_params["layers_config"]):
+            best_model.add(layer)
+
+    epochs = best_params.get("epochs", 25)
+    batch_size = best_params.get("batch_size", 32)
+    patience = best_params.get("patience", epochs)
+    shuffle_local = best_params.get("shuffle", True)
+
+    if verbose:
+        print("\nTraining final model on full dataset with best parameters...\n")
+
+    best_loss_history = best_model.fit(
+        X, y,
+        epochs=epochs,
+        batch_size=batch_size,
+        validation_data=validation_data,
+        shuffle=shuffle_local,
+        patience=patience,
+        verbose=verbose,
+        random_state=random_state
+    )
+
+    total_time = time.time() - start_time_total
+    if verbose > 0:
+        print(f"\nTotal execution time: {total_time:.2f} second(s).\n")
 
     return {
         "best_score": best_score,
