@@ -3,8 +3,10 @@ import numpy as np
 import math
 import random
 import copy
+import time
 from itertools import product
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type
+from joblib import Parallel, delayed
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 from .models import Model
 from .optimizers import OPTIMIZERS
@@ -162,33 +164,8 @@ def __filter_optimizer_combinations(
         filtered_combos.append(combo)
     return filtered_combos
 
-
-def accuracy_scoring(model: Model, X_val: np.ndarray, y_val: np.ndarray) -> float:
-    """
-    Default scoring function to calculate accuracy.
-
-    Parameters
-    ----------
-    model : Model
-        Trained model used for predictions.
-    X_val : np.ndarray
-        Validation feature data.
-    y_val : np.ndarray
-        Validation labels (assumed to be one-hot encoded).
-
-    Returns
-    -------
-    float
-        Accuracy score computed as the mean of correct predictions.
-    """
-    predictions = model.predict(X_val)
-    predicted_classes = np.argmax(predictions, axis=1)
-    true_classes = np.argmax(y_val, axis=1)
-    return np.mean(predicted_classes == true_classes)
-
-
 def grid_search_cv(
-    model_class: Type[Model],
+    model_class: Type["Model"],
     param_grid: Dict[str, List[Any]],
     X: np.ndarray,
     y: np.ndarray,
@@ -197,8 +174,9 @@ def grid_search_cv(
     shuffle: bool = True,
     random_state: Optional[int] = None,
     scoring: str = "accuracy",
-    verbose: int = 1
-    ) -> Dict[str, Any]:
+    verbose: int = 1,
+    n_jobs: int = 1
+) -> Dict[str, Any]:
     """
     Perform grid search cross-validation to tune hyperparameters and select the best model configuration.
 
@@ -220,10 +198,12 @@ def grid_search_cv(
         Whether to shuffle the dataset before splitting; by default True.
     random_state : int, optional
         Seed for random number generators; by default None.
-    scoring : callable, optional
-        Scoring function to evaluate model performance; by default uses `default_scoring`.
+    scoring : str, optional
+        Scoring function name to evaluate model performance; by default "accuracy".
     verbose : int, optional
         Verbosity level for printing progress; by default 1.
+    n_jobs : int, optional
+        Number of processes to use for parallelization; by default 1 (no parallelization).
 
     Returns
     -------
@@ -231,22 +211,28 @@ def grid_search_cv(
         Dictionary containing:
             - best_score: Best cross-validation score.
             - best_params: Best hyperparameter configuration.
-            - best_model: Model trained on the full dataset with best parameters.
+            - best_model: Model trained on the full dataset with the best parameters.
             - best_loss_history: Training loss history for the best model.
             - results: List of tuples (params, mean_score, std_score) for each configuration.
     """
-    
-    # CV check to bound the splits between 2 and the number of samples.
+
+    # Correctness check of cv parameter
     if cv < 2:
-        raise ValueError(f"The parameter 'cv' cannot be less than 2.")
-    
+        raise ValueError("The parameter 'cv' cannot be less than 2.")
     if cv > X.shape[0]:
-        raise ValueError(f"The parameter 'cv' cannot be more than the number of samples.")
-    
+        raise ValueError("The parameter 'cv' cannot be more than the number of samples.")
+
+    # Correctness check of n_jobs parameter
+    if n_jobs < 1:
+        raise ValueError("The parameter 'n_jobs' must be >= 1.")
+
     # Create a random generator with a fixed seed if random_state is set
     if random_state is not None:
         np.random.seed(random_state)
         random.seed(random_state)
+
+    # Start timer for the entire grid search
+    start_time_total = time.time()
 
     n_samples = X.shape[0]
 
@@ -259,13 +245,12 @@ def grid_search_cv(
     # Create folds for cross-validation
     folds = __create_folds(n_samples, cv)
 
-    # Use the default scoring function if none is provided
+    # Retrieve scoring function
     scoring_name = scoring
-    
     if scoring_name not in SCORING_FUNCTIONS:
         raise ValueError(f"'{scoring_name}' is not a valid score function.")
-    
-    scoring = SCORING_FUNCTIONS[scoring_name]["fn"]
+
+    scoring_fn = SCORING_FUNCTIONS[scoring_name]["fn"]
 
     # Generate all parameter combinations from the grid
     combinations = __generate_param_combinations(param_grid)
@@ -275,10 +260,12 @@ def grid_search_cv(
     if optimizers:
         combinations = __filter_optimizer_combinations(combinations, optimizers)
 
-    if verbose:
+    if verbose and n_jobs == 1:
         print("Parameter combinations to evaluate:")
         for combo in combinations:
             print(combo)
+    
+    if verbose > 0:
         print(f"Total combinations: {len(combinations)}\n")
 
     best_score = SCORING_FUNCTIONS[scoring_name]["best_init"]
@@ -286,17 +273,27 @@ def grid_search_cv(
     best_model = None
     results = []
 
-    config_counter = 1
-    # Evaluate each parameter combination using cross-validation
-    for params in combinations:
-        if verbose:
-            print(f"Training configuration [{config_counter}/{len(combinations)}]: {params}")
+    def _train_and_evaluate(params: Dict[str, Any]) -> Tuple[Dict[str, Any], float, float]:
+        """
+        Train a single configuration using cross-validation and return the (params, mean_score, std_score).
+        This function is designed to be used in a parallel context when n_jobs>1.
+        """
+        
+        # Start timer for config training
+        start_config_time = time.time()
+        
+        # If using parallelization, fit verbosity is reduced and print only minimal info that a new configuration is being trained.
+        if n_jobs > 1 and verbose > 0:
+            print(f"Training configuration: {params}")
 
         fold_scores = []
+        # We use local verbosity for model.fit calls:
+        local_fit_verbose = 0 if n_jobs > 1 else verbose
 
-        # Iterate over each fold
+        # Cross-validation loop
         for fold_index, (start_idx, end_idx) in enumerate(folds):
-            if verbose:
+            # Print fold info only if not parallel (to avoid cluttered logs).
+            if verbose > 0 and n_jobs == 1:
                 print(f"\nFold {fold_index + 1}/{len(folds)}\n")
 
             # Split into training and validation sets for the current fold
@@ -305,7 +302,7 @@ def grid_search_cv(
             X_train_fold = np.concatenate((X[:start_idx], X[end_idx:]), axis=0)
             y_train_fold = np.concatenate((y[:start_idx], y[end_idx:]), axis=0)
 
-            # Initialize model using only valid parameters for the constructor
+            # Initialize model using valid parameters for the constructor
             model_init_params = __extract_model_init_params(model_class, params)
             model = model_class(**model_init_params)
 
@@ -314,7 +311,7 @@ def grid_search_cv(
                 for layer in copy.deepcopy(params["layers_config"]):
                     model.add(layer)
 
-            # Get training hyperparameters
+            # Retrieve training hyperparameters
             epochs = params.get("epochs", 25)
             batch_size = params.get("batch_size", 32)
             patience = params.get("patience", epochs)
@@ -328,28 +325,60 @@ def grid_search_cv(
                 validation_data=(X_val_fold, y_val_fold),
                 shuffle=shuffle_local,
                 patience=patience,
-                verbose=verbose,
+                verbose=local_fit_verbose,
                 random_state=random_state
             )
 
             # Evaluate the model on the validation fold
-            score = scoring(model, X_val_fold, y_val_fold)
+            score = scoring_fn(model, X_val_fold, y_val_fold)
             fold_scores.append(score)
 
         mean_score = np.mean(fold_scores)
         std_score = np.std(fold_scores)
-        results.append((params, mean_score, std_score))
 
-        if verbose:
-            print(f"Configuration: {params}")
-            print(f"Mean score ({scoring_name}): {mean_score:.4f}, Std: {std_score:.4f}\n")
+        config_time = time.time() - start_config_time
 
-        # Update best parameters if the current configuration is better
-        if SCORING_FUNCTIONS[scoring_name]["compare"](mean_score, best_score):
-            best_score = mean_score
-            best_params = params
+        return params, mean_score, std_score, config_time
 
-        config_counter += 1
+    # Single-process approach
+    if n_jobs == 1:
+        for config_counter, params in enumerate(combinations, start=1):
+            if verbose:
+                print(f"- Training configuration [{config_counter}/{len(combinations)}]: {params}")
+
+            params, mean_score, std_score, config_time = _train_and_evaluate(params)
+            results.append((params, mean_score, std_score))
+
+            if verbose:
+                print(f"\nConfiguration completed in {config_time:.2f} second(s).")
+                print(f"Mean score ({scoring_name}): {mean_score:.4f}, Std: {std_score:.4f}\n")
+
+            # Update best parameters if the current configuration is better
+            if SCORING_FUNCTIONS[scoring_name]["compare"](mean_score, best_score):
+                best_score = mean_score
+                best_params = params
+
+    # Parallel approach
+    else:
+        # Evaluate configurations in parallel
+        parallel_results = Parallel(n_jobs=n_jobs)(
+            delayed(_train_and_evaluate)(params) for params in combinations
+        )
+
+        # Process the parallel results in the same order as 'combinations'
+        for config_counter, (params, mean_score, std_score, config_time) in enumerate(parallel_results, start=1):
+            results.append((params, mean_score, std_score))
+
+            if verbose > 0:
+                print(
+                    f"Configuration [{config_counter}/{len(combinations)}] completed in {config_time:.2f} second(s): "
+                    f"Mean score ({scoring_name}) = {mean_score:.4f}, Std = {std_score:.4f}"
+                )
+
+            # Update best parameters if the current configuration is better
+            if SCORING_FUNCTIONS[scoring_name]["compare"](mean_score, best_score):
+                best_score = mean_score
+                best_params = params
 
     if best_params is None:
         raise ValueError("No valid hyperparameter combination found.")
@@ -368,7 +397,7 @@ def grid_search_cv(
     shuffle_local = best_params.get("shuffle", True)
 
     if verbose:
-        print("Training final model on full dataset with best parameters...\n")
+        print("\nTraining final model on full dataset with best parameters...\n")
 
     best_loss_history = best_model.fit(
         X, y,
@@ -381,6 +410,11 @@ def grid_search_cv(
         random_state=random_state
     )
 
+    end_time_total = time.time()
+    if verbose > 0:
+        total_time = end_time_total - start_time_total
+        print(f"\nTotal execution time: {total_time:.2f} second(s).\n")
+
     return {
         "best_score": best_score,
         "best_params": best_params,
@@ -388,8 +422,6 @@ def grid_search_cv(
         "best_loss_history": best_loss_history,
         "results": results
     }
-
-
 
 # TODO: Make adjustments in relation to grid search fixes.
 

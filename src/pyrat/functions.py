@@ -7,7 +7,13 @@ def relu_derivative(x):
     return np.where(x > 0, 1, 0)
 
 def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
+    x = np.clip(x, -50, 50)
+    return np.where(
+        x >= 0,
+        1 / (1 + np.exp(-x)),
+        np.exp(x) / (1 + np.exp(x))
+    )
+
 
 def sigmoid_derivative(x):
     return sigmoid(x) * (1 - sigmoid(x))

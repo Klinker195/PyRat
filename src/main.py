@@ -17,9 +17,12 @@ from sklearn.metrics import confusion_matrix
 def model_test(X_train, y_train, validation_data=None):
     model = Model(loss_fn='cross-entropy', optimizer='rprop')
 
-    model.add(DenseLayer(input_size=784, output_size=10, activation_fn='softmax'))
+    # model.add(DenseLayer(input_size=784, output_size=10, activation_fn='softmax'))
+    
+    model.add(DenseLayer(input_size=784, output_size=16, activation_fn='sigmoid'))
+    model.add(DenseLayer(input_size=16, output_size=10, activation_fn='softmax'))
 
-    loss_history = model.fit(X_train, y_train, epochs=50, batch_size=60000, validation_data=validation_data, shuffle=True, patience=20)
+    loss_history = model.fit(X_train, y_train, epochs=100, batch_size=60000, validation_data=validation_data, shuffle=True, patience=20)
 
     return model, loss_history
 
@@ -33,25 +36,26 @@ def grid_search_test(X_train, y_train, validation_data=None):
             {"eta_plus": 1.1, "eta_minus": 0.7, "delta_min": 1e-7, "delta_max": 25},
             {"eta_plus": 1.3, "eta_minus": 0.3, "delta_min": 1e-6, "delta_max": 75},
             {"learning_rate": 0.001},
-            {"learning_rate": 0.01}
+            {"learning_rate": 0.0001}
         ],
         "layers_config": [
+            [DenseLayer(input_size=784, output_size=16, activation_fn='sigmoid'), DenseLayer(input_size=16, output_size=10, activation_fn='softmax')],
             [DenseLayer(input_size=784, output_size=10, activation_fn='softmax')]
         ],
         "epochs": [50],
         "batch_size": [32, 60000]
-    }
+    } 
 
-    results = grid_search_cv(model_class=Model, param_grid=param_grid, X=X_train, y=y_train, validation_data=validation_data, cv=3, scoring="accuracy", shuffle=True, verbose=1, random_state=42)
+    results = grid_search_cv(model_class=Model, param_grid=param_grid, X=X_train, y=y_train, validation_data=validation_data, cv=3, scoring="cross-entropy", shuffle=True, verbose=1, n_jobs=6)
 
-    print(f"\nBest Score: {results["best_score"]:.4f}\n")
-    print(f"Best Params: {results["best_params"]}\n")
+    # print(f"Best Score: {results["best_score"]:.4f}\n")
+    print(f"\nBest Params: {results["best_params"]}\n")
 
     sorted_results = sorted(results["results"], key=lambda x: x[1], reverse=True)
 
-    print("Detailed results:")
-    for combo, mean_score, std_score in sorted_results:
-        print(combo, f"\navg_score: {mean_score:.4f} - std_score: {std_score:.4f}\n")
+    # print("Detailed results:")
+    # for combo, mean_score, std_score in sorted_results:
+    #     print(combo, f"\navg_score: {mean_score:.4f} - std_score: {std_score:.4f}\n")
 
     best_model = results["best_model"]
     best_loss_history = results["best_loss_history"]
@@ -77,7 +81,7 @@ def random_search_test(X_train, y_train, n_iter=4):
     
     results = random_search_cv(model_class=Model, param_grid=param_grid, X=X_train, y=y_train, n_iter=n_iter, cv=3, shuffle=True, random_state=42, verbose=2)
     
-    print("\nBest Score:", results["best_score"])
+    print("Best Score:", results["best_score"])
     print("Best Params:", results["best_params"])
     print("Detailed results:")
     for combo, mean_score, std_score in results["results"]:

@@ -19,9 +19,9 @@ class Model:
     layers : list of Layer, optional
         A list of Layer objects to be added to the model.
     loss_fn : str, default="cross-entropy"
-        The name of the loss function to be used (must be a valid key in `LOSS_FUNCTIONS`).
+        The name of the loss function to be used (must be a valid key in 'LOSS_FUNCTIONS').
     optimizer : str, default="rprop"
-        The name of the optimizer to be used (must be a valid key in `OPTIMIZERS`).
+        The name of the optimizer to be used (must be a valid key in 'OPTIMIZERS').
     opt_params : dict of {str: float}, optional
         A dictionary of hyperparameters for the specified optimizer. Only parameters
         that match the optimizer's constructor signature will be used.
@@ -58,12 +58,12 @@ class Model:
         Parameters
         ----------
         loss_fn : str
-            Name of the loss function to use. Must be a valid key in `LOSS_FUNCTIONS`.
+            Name of the loss function to use. Must be a valid key in 'LOSS_FUNCTIONS'.
 
         Raises
         ------
         ValueError
-            If the specified `loss_fn` does not exist in `LOSS_FUNCTIONS`.
+            If the specified 'loss_fn' does not exist in 'LOSS_FUNCTIONS'.
         """
         if loss_fn not in LOSS_FUNCTIONS:
             raise ValueError(f"'{loss_fn}' is not a valid score function.")
@@ -77,7 +77,7 @@ class Model:
         Parameters
         ----------
         optimizer : str
-            Name of the optimizer (must be a valid key in `OPTIMIZERS`).
+            Name of the optimizer (must be a valid key in 'OPTIMIZERS').
         opt_params : dict of {str: float} or None
             Dictionary of hyperparameters for the optimizer. Only valid parameters
             in the constructor signature of the optimizer will be used.
@@ -85,7 +85,7 @@ class Model:
         Raises
         ------
         ValueError
-            If the specified `optimizer` does not exist in `OPTIMIZERS`.
+            If the specified 'optimizer' does not exist in 'OPTIMIZERS'.
         """
         opt_class = OPTIMIZERS.get(optimizer)
         if opt_class is None:
