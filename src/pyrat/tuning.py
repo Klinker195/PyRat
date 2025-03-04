@@ -171,7 +171,6 @@ def grid_search_cv(
     y: np.ndarray,
     validation_data: Optional[Tuple[np.ndarray, np.ndarray]] = None,
     cv: int = 3,
-    shuffle: bool = True,
     random_state: Optional[int] = None,
     scoring: str = "accuracy",
     verbose: int = 1,
@@ -194,8 +193,6 @@ def grid_search_cv(
         Tuple (X_val, y_val) for final model validation; by default None.
     cv : int, optional
         Number of cross-validation folds; by default 3.
-    shuffle : bool, optional
-        Whether to shuffle the dataset before splitting; by default True.
     random_state : int, optional
         Seed for random number generators; by default None.
     scoring : str, optional
@@ -235,12 +232,6 @@ def grid_search_cv(
     start_time_total = time.time()
 
     n_samples = X.shape[0]
-
-    # Shuffle the dataset if required
-    if shuffle:
-        perm = np.random.permutation(n_samples)
-        X = X[perm]
-        y = y[perm]
 
     # Create folds for cross-validation
     folds = __create_folds(n_samples, cv)
@@ -284,7 +275,7 @@ def grid_search_cv(
         
         # If using parallelization, fit verbosity is reduced and print only minimal info that a new configuration is being trained.
         if n_jobs > 1 and verbose > 0:
-            print(f"Training configuration: {params}")
+            print(f"- Training configuration: {params}")
 
         fold_scores = []
         # We use local verbosity for model.fit calls:
@@ -433,7 +424,6 @@ def random_search_cv(
     y: np.ndarray,
     validation_data: Optional[Tuple[np.ndarray, np.ndarray]] = None,
     cv: int = 3,
-    shuffle: bool = True,
     random_state: Optional[int] = None,
     scoring: str = "accuracy",
     verbose: int = 1,
@@ -458,8 +448,6 @@ def random_search_cv(
         Tuple (X_val, y_val) for final model validation; by default None.
     cv : int, optional
         Number of cross-validation folds; by default 3.
-    shuffle : bool, optional
-        Whether to shuffle the dataset before splitting; by default True.
     random_state : Optional[int], optional
         Seed for random number generators; by default None.
     scoring : str, optional
@@ -493,14 +481,11 @@ def random_search_cv(
         np.random.seed(random_state)
         random.seed(random_state)
 
+    if verbose > 0:
+            print(f"Total combinations: {n_iter}\n")
+
     start_time_total = time.time()
     n_samples = X.shape[0]
-
-    # Shuffle the dataset if required
-    if shuffle:
-        perm = np.random.permutation(n_samples)
-        X = X[perm]
-        y = y[perm]
 
     # Create cross-validation folds
     folds = __create_folds(n_samples, cv)
@@ -569,7 +554,7 @@ def random_search_cv(
         start_config_time = time.time()
 
         if n_jobs > 1 and verbose > 0:
-            print(f"Training configuration: {params}")
+            print(f"- Training configuration: {params}")
 
         fold_scores = []
         # Set local verbosity for model.fit calls: reduce output in parallel mode.

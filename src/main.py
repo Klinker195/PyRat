@@ -12,8 +12,6 @@ from sklearn.metrics import confusion_matrix
 
 # pyrat - Rapid Artificial Training
 
-# TODO: Add comments and docstrings
-
 def model_test(X_train, y_train, validation_data=None):
     model = Model(loss_fn='cross-entropy', optimizer='rprop')
 
@@ -22,7 +20,13 @@ def model_test(X_train, y_train, validation_data=None):
     model.add(DenseLayer(input_size=784, output_size=16, activation_fn='sigmoid'))
     model.add(DenseLayer(input_size=16, output_size=10, activation_fn='softmax'))
 
-    loss_history = model.fit(X_train, y_train, epochs=100, batch_size=60000, validation_data=validation_data, shuffle=True, patience=20)
+    loss_history = model.fit(X_train,
+                             y_train,
+                             epochs=100,
+                             batch_size=60000,
+                             validation_data=validation_data,
+                             shuffle=True,
+                             patience=20)
 
     return model, loss_history
 
@@ -44,10 +48,20 @@ def grid_search_test(X_train, y_train, validation_data=None):
         ],
         "epochs": [50],
         "batch_size": [32, 60000],
-        "shuffle": [False]
-    } 
+        "shuffle": [True]
+    }
+    
+    scoring_fn_name = "cross-entropy"
 
-    results = grid_search_cv(model_class=Model, param_grid=param_grid, X=X_train, y=y_train, validation_data=validation_data, cv=3, scoring="cross-entropy", shuffle=False, verbose=1, n_jobs=6)
+    results = grid_search_cv(model_class=Model,
+                             param_grid=param_grid,
+                             X=X_train,
+                             y=y_train,
+                             validation_data=validation_data,
+                             cv=3,
+                             scoring=scoring_fn_name,
+                             verbose=1,
+                             n_jobs=6)
 
     print(f"Best Score: {results["best_score"]:.4f}\n")
     print(f"\nBest Params: {results["best_params"]}\n")
@@ -71,9 +85,7 @@ def random_search_test(X_train, y_train, validation_data=None):
             {"eta_plus": 1.2, "eta_minus": 0.5, "delta_min": 1e-6, "delta_max": 50},
             {"eta_plus": 1.5, "eta_minus": 0.4, "delta_min": 1e-6, "delta_max": 100},
             {"eta_plus": 1.1, "eta_minus": 0.7, "delta_min": 1e-7, "delta_max": 25},
-            {"eta_plus": 1.3, "eta_minus": 0.3, "delta_min": 1e-6, "delta_max": 75},
-            {"eta_plus": 1.0, "eta_minus": 0.6, "delta_min": 1e-8, "delta_max": 10},
-            {"eta_plus": 1.4, "eta_minus": 0.5, "delta_min": 1e-6, "delta_max": 80}
+            {"eta_plus": 1.3, "eta_minus": 0.3, "delta_min": 1e-6, "delta_max": 75}
         ],
         "layers_config": [
             [
@@ -91,12 +103,13 @@ def random_search_test(X_train, y_train, validation_data=None):
         ],
         "epochs": [50, 100],
         "batch_size": [32, 128, 60000],
-        "shuffle": [False, True]
+        "shuffle": [True]
     }
 
-    
     # Set the number of random configurations to evaluate
     n_iter = 10 
+
+    scoring_fn_name = "cross-entropy"
     
     results = random_search_cv(
         model_class=Model,
@@ -106,8 +119,7 @@ def random_search_test(X_train, y_train, validation_data=None):
         y=y_train,
         validation_data=validation_data,
         cv=3,
-        scoring="cross-entropy",
-        shuffle=False,
+        scoring=scoring_fn_name,
         verbose=1,
         n_jobs=6
     )
@@ -145,8 +157,8 @@ if __name__ == "__main__":
     print()
 
     model, loss_history = random_search_test(X_train, y_train, validation_data=(X_val, y_val))
-    #model, loss_history = grid_search_test(X_train, y_train, validation_data=(X_val, y_val))
-    #model, loss_history = model_test(X_train, y_train, validation_data=(X_val, y_val))
+    # model, loss_history = grid_search_test(X_train, y_train, validation_data=(X_val, y_val))
+    # model, loss_history = model_test(X_train, y_train, validation_data=(X_val, y_val))
     
     plt.figure(figsize=(8, 6))
     plt.plot(loss_history['loss'], label='Training Loss')
