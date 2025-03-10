@@ -3,9 +3,14 @@ import numpy as np
 from typing import Dict, Tuple, Type
 
 class Optimizer(ABC):
+    """
+    Abstract base class for optimizers. 
+    Every optimizer must implement an __init__ and an update method.
+    """
 
     @abstractmethod
     def __init__(self) -> None:
+        """Initialize any internal variables or state for the optimizer."""
         pass
 
     @abstractmethod
@@ -16,6 +21,9 @@ class Optimizer(ABC):
         grad_w: np.ndarray, 
         grad_b: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Apply an update step to the weights and biases based on their gradients.
+        """
         pass
 
 
@@ -69,12 +77,14 @@ class RPROP(Optimizer):
         delta_max : float, optional
             Maximum permissible step size, by default 50
         """
+        # These hyperparameters control how aggressively the step sizes grow or shrink
         self.eta_plus = eta_plus
         self.eta_minus = eta_minus
         self.delta_min = delta_min
         self.delta_max = delta_max
 
-        # Store optimizer-specific states for each (weights, bias) pair.
+        # Dictionary holding per-parameter data structures:
+        # step sizes (delta_w, delta_b) and the previous gradients (prev_grad_w, prev_grad_b).
         self.state: Dict = {}
 
     def update(
@@ -88,16 +98,16 @@ class RPROP(Optimizer):
         Updates the weights and bias using RPROP.
 
         RPROP modifies step sizes based on the sign of 
-        the gradient compared to the previous iteration:
+        the current gradient compared to the previous iteration:
         
-        - If the sign of grad(current) * grad(previous) > 0,
+        - If grad(current) * grad(previous) > 0:
           the step size is multiplied by 'eta_plus'.
-        - If the sign of grad(current) * grad(previous) < 0,
+        - If grad(current) * grad(previous) < 0:
           the step size is multiplied by 'eta_minus'.
         - The step size is then clipped to the [delta_min, delta_max] range.
         
-        Additionally, if the sign has changed, we set the 
-        current gradient to zero to avoid immediate reversal.
+        Additionally, if the sign has changed, the current gradient is 
+        effectively set to zero to avoid an immediate direction reversal.
 
         Parameters
         ----------
@@ -115,50 +125,54 @@ class RPROP(Optimizer):
         (np.ndarray, np.ndarray)
             The updated weights and bias.
         """
-        # Create a unique key for this set of parameters
+        # Create a unique key for this set of weights/biases 
+        # so that each parameter group has independent state.
         key = (id(weights), id(bias))
 
-        # If first time, initialize the step size (delta) and previous gradient storage
+        # If we've never seen these particular parameters before,
+        # initialize their step sizes and previous gradients.
         if key not in self.state:
             self.state[key] = {}
-            # Start with a small default step size for each element
+            # Start with a small default step size for every element
             self.state[key]["delta_w"] = np.full_like(grad_w, 0.01)
             self.state[key]["delta_b"] = np.full_like(grad_b, 0.01)
-            # Store previous gradients
+            # Store previous gradients (initially zero)
             self.state[key]["prev_grad_w"] = np.zeros_like(grad_w)
             self.state[key]["prev_grad_b"] = np.zeros_like(grad_b)
 
+        # Retrieve stored step sizes and previous gradients
         delta_w = self.state[key]["delta_w"]
         delta_b = self.state[key]["delta_b"]
         prev_grad_w = self.state[key]["prev_grad_w"]
         prev_grad_b = self.state[key]["prev_grad_b"]
 
-        # Evaluate sign changes
-        grad_sign_w = prev_grad_w * grad_w  # Elementwise product
+        # The elementwise product of prev_grad and current grad indicates sign consistency
+        grad_sign_w = prev_grad_w * grad_w
         grad_sign_b = prev_grad_b * grad_b
 
-        # Masks to identify positive/negative sign changes
+        # Create boolean masks to identify where the gradient sign is consistent (+) or flipped (−)
         mask_plus_w = (grad_sign_w > 0)
         mask_minus_w = (grad_sign_w < 0)
         mask_plus_b = (grad_sign_b > 0)
         mask_minus_b = (grad_sign_b < 0)
 
-        # Update step sizes (delta) for weights
-        # For positive sign: multiply delta by eta_plus, but also ensure 
-        # we don't exceed delta_max when scaling up.
+        # Update step sizes (for W)
+        # If sign is consistent (positive product), multiply the step size by eta_plus
+        # but ensure we do not exceed delta_max when scaling up.
         safe_limit_plus_w = self.delta_max / max(self.eta_plus, 1e-16)
         delta_w[mask_plus_w] = np.minimum(delta_w[mask_plus_w], safe_limit_plus_w)
         delta_w[mask_plus_w] *= self.eta_plus
 
-        # For negative sign: multiply delta by eta_minus, again respecting delta_max.
+        # If sign is flipped (negative product), multiply the step size by eta_minus
+        # again ensuring we don't exceed the delta_max after scaling.
         safe_limit_minus_w = self.delta_max / max(self.eta_minus, 1e-16)
         delta_w[mask_minus_w] = np.minimum(delta_w[mask_minus_w], safe_limit_minus_w)
         delta_w[mask_minus_w] *= self.eta_minus
 
-        # Clip delta values between delta_min and delta_max
+        # Clip all deltas between delta_min and delta_max to avoid instability
         delta_w = np.clip(delta_w, self.delta_min, self.delta_max)
 
-        # Update step sizes (delta) for bias
+        # Update step sizes (for b)
         safe_limit_plus_b = self.delta_max / max(self.eta_plus, 1e-16)
         delta_b[mask_plus_b] = np.minimum(delta_b[mask_plus_b], safe_limit_plus_b)
         delta_b[mask_plus_b] *= self.eta_plus
@@ -167,23 +181,24 @@ class RPROP(Optimizer):
         delta_b[mask_minus_b] = np.minimum(delta_b[mask_minus_b], safe_limit_minus_b)
         delta_b[mask_minus_b] *= self.eta_minus
 
+        # As above, clip to the allowed range
         delta_b = np.clip(delta_b, self.delta_min, self.delta_max)
 
-        # Update weights/bias with newly computed deltas
-        # For positive sign: use the sign of current gradient
+        # Apply weight and bias updates
+        # For the elements with consistent sign, update using the current grad's sign
         weights[mask_plus_w] -= delta_w[mask_plus_w] * np.sign(grad_w[mask_plus_w])
-        # For negative sign: use the sign of the previous gradient (to avoid immediate reversal)
+        # For the elements with flipped sign, rely on the sign of the *previous* gradient
         weights[mask_minus_w] -= delta_w[mask_minus_w] * np.sign(prev_grad_w[mask_minus_w])
 
         bias[mask_plus_b] -= delta_b[mask_plus_b] * np.sign(grad_b[mask_plus_b])
         bias[mask_minus_b] -= delta_b[mask_minus_b] * np.sign(prev_grad_b[mask_minus_b])
 
-        # If sign changed (mask_minus), reset current gradient to 0 
-        # to avoid "backtracking" issues in the next iteration
+        # Reset the current gradient to zero where the sign flipped,
+        # to prevent a future immediate jump back in the opposite direction.
         grad_w[mask_minus_w] = 0
         grad_b[mask_minus_b] = 0
 
-        # Store current gradients for the next iteration
+        # Finally, store these current gradients for the next iteration's sign check
         self.state[key]["prev_grad_w"] = grad_w.copy()
         self.state[key]["prev_grad_b"] = grad_b.copy()
 
@@ -238,14 +253,16 @@ class Adam(Optimizer):
         epsilon : float, optional
             Small constant for numerical stability, by default 1e-8
         """
+        # Fundamental hyperparameters for the Adam algorithm
         self.learning_rate = learning_rate
         self.beta1 = beta1
         self.beta2 = beta2
         self.epsilon = epsilon
         
-        # Dictionary to store moment estimates for each (weights, bias)
+        # Dictionary to store the moments for each parameter set
         self.state: Dict = {}
-        self.global_step = 0  # Can be used for scheduling if needed
+        # Global step can help with scheduling or diagnosing convergence
+        self.global_step = 0
 
     def update(
         self, 
@@ -273,42 +290,47 @@ class Adam(Optimizer):
         (np.ndarray, np.ndarray)
             The updated weights and bias.
         """
+        # Increment global step on every call, so we know how many updates have been done
         self.global_step += 1
+        # Create a unique key for this specific set of parameters
         key = (id(weights), id(bias))
 
-        # If first time using these parameters, initialize their state
+        # If these parameters haven't been seen yet, initialize their state
         if key not in self.state:
             self.state[key] = {
-                "m_w": np.zeros_like(grad_w),
-                "v_w": np.zeros_like(grad_w),
-                "m_b": np.zeros_like(grad_b),
-                "v_b": np.zeros_like(grad_b),
-                "t_local": 0  # Local timestep for these particular parameters
+                "m_w": np.zeros_like(grad_w),  # First moment for weights
+                "v_w": np.zeros_like(grad_w),  # Second moment for weights
+                "m_b": np.zeros_like(grad_b),  # First moment for bias
+                "v_b": np.zeros_like(grad_b),  # Second moment for bias
+                "t_local": 0                   # Local timestep for these parameters
             }
 
+        # Increase the local timestep for these weights and biases
         self.state[key]["t_local"] += 1
         t_local = self.state[key]["t_local"]
 
+        # Retrieve the moment estimates from the state dictionary
         m_w = self.state[key]["m_w"]
         v_w = self.state[key]["v_w"]
         m_b = self.state[key]["m_b"]
         v_b = self.state[key]["v_b"]
 
-        # First moment estimates (m)
+        # Update the first moments
         m_w[:] = self.beta1 * m_w + (1 - self.beta1) * grad_w
         m_b[:] = self.beta1 * m_b + (1 - self.beta1) * grad_b
         
-        # Second moment estimates (v)
+        # Update the second moments
         v_w[:] = self.beta2 * v_w + (1 - self.beta2) * (grad_w ** 2)
         v_b[:] = self.beta2 * v_b + (1 - self.beta2) * (grad_b ** 2)
 
         # Bias correction
-        m_w_hat = m_w / (1 - self.beta1 ** t_local)
-        v_w_hat = v_w / (1 - self.beta2 ** t_local)
-        m_b_hat = m_b / (1 - self.beta1 ** t_local)
-        v_b_hat = v_b / (1 - self.beta2 ** t_local)
+        m_w_hat = m_w / (1 - self.beta1 ** t_local)  # Correct first moment
+        v_w_hat = v_w / (1 - self.beta2 ** t_local)  # Correct second moment
+        m_b_hat = m_b / (1 - self.beta1 ** t_local)  # Correct first moment
+        v_b_hat = v_b / (1 - self.beta2 ** t_local)  # Correct second moment
 
-        # Update parameters
+        # Apply the parameter updates
+        # Compute the adaptive learning rate using the corrected moments
         weights -= self.learning_rate * m_w_hat / (np.sqrt(v_w_hat) + self.epsilon)
         bias -= self.learning_rate * m_b_hat / (np.sqrt(v_b_hat) + self.epsilon)
 
